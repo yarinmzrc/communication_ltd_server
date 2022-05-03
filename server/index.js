@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require('cors')
 const mysql = require("mysql");
+const bcrypt = require("bcryptjs/dist/bcrypt");
 
 const PORT = process.env.PORT || 3001;
 
@@ -25,30 +26,46 @@ db.connect(err => {
   createTables();
 })
 
-app.post('/create-user', (req, res) => {
+app.post('/create-user', async(req, res) => {
   const {email, password} = req.body.userDetails;
   let sql = `SELECT * from users WHERE email=?`;
-  db.query(sql, email, (err, result) => {
+  db.query(sql, email, async (err, result) => {
     if(err) {
       throw err;
     }
     if(result.length) {
       res.send("user already registered")
     } else {
-      db.query(`INSERT INTO users VALUES (?,?)`, [email, password], (err, result)=>{
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+
+      db.query(`INSERT INTO users VALUES (?,?)`, [email, hashedPassword], (err, result)=>{
         if(err) throw err;
         db.query(`SELECT * FROM users WHERE email=?`, email, (err, result) => {
           if(err) throw err;
           if(result){
-            console.log(result[0])
+            res.send(result[0])
           }
         })
       })
     }
   })
-   
+})
 
-  
+app.post('/login-user', async(req, res) => {
+  const {email, password} = req.body.userDetails;
+  let sql = `SELECT * from users WHERE email=?`;
+  db.query(sql, email, async(err, result) => {
+    if(err) throw err;
+    if(result.length) {
+      const userFound=JSON.parse(JSON.stringify(result[0]));
+      if( await bcrypt.compare(password, userFound.password)) {
+        res.send(userFound);
+      } else {
+        res.status(400).send("Not Authenticated");
+      }
+    }
+  })
 })
 
 app.listen(PORT, () => {
