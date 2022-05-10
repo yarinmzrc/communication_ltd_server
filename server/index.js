@@ -8,6 +8,16 @@ const jwt = require('jsonwebtoken');
 const validator = require('validator');
 const config = require('./config.json');
 require('dotenv').config();
+const https = require("https");
+const fs = require("fs");
+const { constants } = require('crypto')
+const options = {
+  key: fs.readFileSync("C:\\Users\\yarin\\privateKey.key"),
+  cert: fs.readFileSync("C:\\Users\\yarin\\certificate.crt"),
+  secureOptions: constants.SSL_OP_NO_TLSv1_0| constants.SSL_OP_NO_SSLv3 | constants.SSL_OP_NO_TLSv1_1 | constants.SSL_OP_NO_TLSv1_1,
+  requestCert: true,
+  rejectUnauthorized: false,
+};
 
 const PORT = process.env.PORT || 3001;
 
@@ -184,9 +194,14 @@ app.post('/add-customer', async(req,res) => {
 
 })
 
-app.listen(PORT, () => {
+https.createServer(options, app).listen(PORT, () => {
   console.log(`Server listening on ${PORT}`);
 });
+
+
+// app.listen(PORT, () => {
+//   console.log(`Server listening on ${PORT}`);
+// });
 
 const createTables = () => {
   let sql = 'CREATE TABLE IF NOT EXISTS users (id INT(11) NOT NULL AUTO_INCREMENT, email VARCHAR(50), password TEXT, customers JSON, primary key(id))';
