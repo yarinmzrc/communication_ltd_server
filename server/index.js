@@ -5,12 +5,13 @@ const bcrypt = require("bcryptjs/dist/bcrypt");
 const CryptoJS = require("crypto-js");
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
-const req = require("express/lib/request");
+const validator = require('validator');
+const config = require('./config.json');
 require('dotenv').config();
 
-let CheckPassword;
-
 const PORT = process.env.PORT || 3001;
+
+let countNumOfPassword = 0;
 
 const app = express();
 app.use(express.json());
@@ -29,7 +30,7 @@ const generateToken = (id) => {
 var transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: 'yarinmzrc@gmail.com',
+    user: 'comltdhit@gmail.com',
     pass: process.env.PASSWORD_MAIL
   }
 });
@@ -56,23 +57,34 @@ db.connect(err => {
 })
 
 app.post('/create-user', async(req, res) => {
-  const {email, password} = req.body.userDetails;
-  let sql = `SELECT * from users WHERE email=?`;
-  db.query(sql, email, async (err, result) => {
-    if(err) {
-      throw err;
-    }
-    if(result.length) {
-      res.send("user already registered")
+  try { 
+    const {email, password} = req.body.userDetails;
+    const checkPassword = validator.isStrongPassword(password, config);
+
+    if(!checkPassword) {
+      countNumOfPassword ++;
+      if(countNumOfPassword === config.passwordHistory) {
+        res.send("You Riched the top of the attempts");
+      }
+      res.send("Password is Not Valid");
+    };
+    let sql = `SELECT * from users WHERE email=?`;
+    db.query(sql, email, async (err, result) => {
+      if(err) {
+        throw err;
+      }
+      if(result.length) {
+        res.send("user already registered")
     } else {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
-
+      
       db.query(`INSERT INTO users(email,password,customers) VALUES (?,?,?)`, [email, hashedPassword,"[]"], (err, result)=>{
         if(err) throw err;
         db.query(`SELECT * FROM users WHERE email=?`, email, (err, result) => {
           if(err) throw err;
           if(result){
+            countNumOfPassword = 0;
             const user = {...result[0], token: generateToken(result[0].id)};
             res.send(user)
           }
@@ -80,6 +92,9 @@ app.post('/create-user', async(req, res) => {
       })
     }
   })
+} catch (err) {
+  res.send(err);
+}
 })
 
 app.post('/login-user', async(req, res) => {
@@ -119,7 +134,7 @@ app.get('/forgot-password', async(req,res) => {
   const result = CryptoJS.enc.Hex.stringify(hash);
 
   var mailOptions = {
-    from: 'yarinmzrc@gmail.com',
+    from: 'comltdhit@gmail.com',
     to: 'yarinmzrc@gmail.com',
     subject: 'Your New Password Is Here!',
     text: result
