@@ -4,6 +4,8 @@ const mysql = require("mysql");
 const bcrypt = require("bcryptjs/dist/bcrypt");
 const CryptoJS = require("crypto-js");
 const nodemailer = require('nodemailer');
+const jwt = require('jsonwebtoken');
+const req = require("express/lib/request");
 require('dotenv').config();
 
 let CheckPassword;
@@ -16,6 +18,12 @@ app.use(cors())
 
 const genRand = (len) => {
   return Math.random().toString(36).substring(2,len+2);
+}
+
+const generateToken = (id) => {
+  return jwt.sign({id}, process.env.JWT_SECRET, {
+    expiresIn: '30d'
+  })
 }
 
 var transporter = nodemailer.createTransport({
@@ -60,12 +68,13 @@ app.post('/create-user', async(req, res) => {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
 
-      db.query(`INSERT INTO users VALUES (?,?,?)`, [email, hashedPassword,'[]'], (err, result)=>{
+      db.query(`INSERT INTO users(email,password,customers) VALUES (?,?,?)`, [email, hashedPassword,"[]"], (err, result)=>{
         if(err) throw err;
         db.query(`SELECT * FROM users WHERE email=?`, email, (err, result) => {
           if(err) throw err;
           if(result){
-            res.send(result[0])
+            const user = {...result[0], token: generateToken(result[0].id)};
+            res.send(user)
           }
         })
       })
@@ -81,11 +90,26 @@ app.post('/login-user', async(req, res) => {
     if(result.length) {
       const userFound=JSON.parse(JSON.stringify(result[0]));
       if( await bcrypt.compare(password, userFound.password)) {
-        res.send(userFound);
+        const newCustomers = JSON.parse(userFound.customers);
+        const user = {...userFound, token: generateToken(userFound.id), customers: newCustomers};
+            res.send(user)
       } else {
         res.send("Not Authenticated");
       }
     }
+  })
+})
+
+app.get('/get-user', async(req,res) => {
+  const token = req.headers.authorization;
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  const sql = `SELECT * from users WHERE id=?`;
+  db.query(sql, decoded.id, (err, result) => {
+    if(err) throw err;
+    const userFound=JSON.parse(JSON.stringify(result[0]));
+    const newCustomers = JSON.parse(userFound.customers);
+    const user = {...userFound, token: generateToken(userFound.id), customers: newCustomers};
+    res.send(user);
   })
 })
 
@@ -150,7 +174,7 @@ app.listen(PORT, () => {
 });
 
 const createTables = () => {
-  let sql = 'CREATE TABLE IF NOT EXISTS users (email VARCHAR(50), password TEXT, customers JSON)';
+  let sql = 'CREATE TABLE IF NOT EXISTS users (id INT(11) NOT NULL AUTO_INCREMENT, email VARCHAR(50), password TEXT, customers JSON, primary key(id))';
   db.query(sql, (err, result) => {
     if(err){
       throw err;
@@ -158,3 +182,24 @@ const createTables = () => {
     console.log('Create users table success')
   })
 }
+
+
+const protect = async (req,res,next) => {
+  let token;
+  if(req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      try {
+          token = req.headers.authorization.split(' ')[1];
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          let sql = `SELECT * from users WHERE id=?`;
+          db.query(sql,decoded.id, (err, result) => {
+            if(err){
+              throw err;
+            }
+            req.user = result[0];
+            next();
+          })
+      } catch(err) {
+        console.log(err);
+      }
+  }
+} 
