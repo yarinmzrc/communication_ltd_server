@@ -112,9 +112,13 @@ app.post('/create-user', async(req, res) => {
 
 app.post('/login-user', async(req, res) => {
   const {email, password} = req.body.userDetails;
-  let sql = `SELECT * from users WHERE email=?`;
-  db.query(sql, email, async(err, result) => {
+  let sql = `SELECT * from users WHERE email=${email}`;
+  db.query(sql, async(err, result) => {
     if(err) throw err;
+    if(result.length === 0) {
+      res.send("Not Authenticated");
+      return;
+    }
     if(result.length) {
       const userFound=JSON.parse(JSON.stringify(result[0]));
       if( await bcrypt.compare(password, userFound.password)) {
@@ -141,14 +145,22 @@ app.get('/get-user', async(req,res) => {
   })
 })
 
-app.get('/forgot-password', async(req,res) => {
+app.post('/forgot-password', async(req,res) => {
+  const {email} = req.body;
+  let sql = `SELECT * from users WHERE email=?`;
   const string = genRand(12);
   const hash = CryptoJS.SHA1(string);
   const result = CryptoJS.enc.Hex.stringify(hash);
-
+  db.query(sql, email, async(err, result) => {
+    if(err) throw err;
+    if(result.length === 0) {
+      res.send("Email Not Found!");
+      return;
+    }
+  })
   var mailOptions = {
     from: 'comltdhit@gmail.com',
-    to: 'yarinmzrc@gmail.com',
+    to: email,
     subject: 'Your New Password Is Here!',
     text: result
   };
@@ -169,6 +181,13 @@ app.post('/change-password', async (req,res) => {
   const {email, password} = req.body;
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(password, salt);
+  db.query(`SELECT * from users WHERE email=?`, email, async (err, result) => {
+    if(err) throw err;
+    if(result.length === 0) {
+      res.send("Email is not registered")
+      return;
+    }
+  })
   let sql = `UPDATE users SET password=? WHERE email=?`;
   db.query(sql, [hashedPassword,email], async(err, result) => {
     if(err) throw err;
