@@ -75,8 +75,10 @@ app.post('/create-user', async(req, res) => {
       countNumOfPassword ++;
       if(countNumOfPassword === config.passwordHistory) {
         res.send("You Riched the top of the attempts");
+        return;
       }
       res.send("Password is Not Valid");
+      return;
     };
     let sql = `SELECT * from users WHERE email=?`;
     db.query(sql, email, async (err, result) => {
@@ -103,7 +105,8 @@ app.post('/create-user', async(req, res) => {
     }
   })
 } catch (err) {
-  res.send(err);
+  res.send(err.message);
+  return;
 }
 })
 
