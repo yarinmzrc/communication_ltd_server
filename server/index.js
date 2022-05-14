@@ -10,7 +10,12 @@ const config = require('./config.json');
 require('dotenv').config();
 const https = require("https");
 const fs = require("fs");
-const { constants } = require('crypto')
+const { constants } = require('crypto');
+const res = require("express/lib/response");
+const path = require ('path');
+const {readFileSync} = require('fs');
+
+
 const options = {
   key: fs.readFileSync("C:\\Users\\yarin\\privateKey.key"),
   cert: fs.readFileSync("C:\\Users\\yarin\\certificate.crt"),
@@ -27,9 +32,25 @@ const app = express();
 app.use(express.json());
 app.use(cors())
 
+const checkIfContainsSync = (str) => {
+  const contents = readFileSync(path.resolve("./passwords_dict.txt"), 'utf-8');
+
+  const result = contents.includes(str);
+
+  return result;
+}
+
 const genRand = (len) => {
   return Math.random().toString(36).substring(2,len+2);
 }
+
+const validateEmail = (email) => {
+  return String(email)
+    .toLowerCase()
+    .match(
+      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+    );
+};
 
 const generateToken = (id) => {
   return jwt.sign({id}, process.env.JWT_SECRET, {
@@ -53,7 +74,8 @@ const db = mysql.createConnection({
   host: 'localhost',
   user: 'root',
   password: 'password',
-  database: 'communication_ltd'
+  database: 'communication_ltd',
+  multipleStatements: true,
 })
 
 db.connect(err => {
@@ -70,6 +92,16 @@ app.post('/create-user', async(req, res) => {
   try { 
     const {email, password} = req.body.userDetails;
     const checkPassword = validator.isStrongPassword(password, config);
+
+    if(!validateEmail(email)) {
+      res.send("Not Authenticated");
+      return;
+    }
+
+    if(checkIfContainsSync(password)) {
+      res.send("Password in dictionary");
+      return;
+    }
 
     if(!checkPassword) {
       countNumOfPassword ++;
@@ -90,8 +122,10 @@ app.post('/create-user', async(req, res) => {
     } else {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
+
+      const arrayOfPasswords = [hashedPassword];
       
-      db.query(`INSERT INTO users(email,password,customers) VALUES (?,?,?)`, [email, hashedPassword,"[]"], (err, result)=>{
+      db.query(`INSERT INTO users(email,password,customers,old_passwords,salt) VALUES (?,?,?,?,?)`, [email, hashedPassword,"[]",JSON.stringify(arrayOfPasswords),salt], (err, result)=>{
         if(err) throw err;
         db.query(`SELECT * FROM users WHERE email=?`, email, (err, result) => {
           if(err) throw err;
@@ -105,16 +139,19 @@ app.post('/create-user', async(req, res) => {
     }
   })
 } catch (err) {
+  console.log(err.message);
   res.send(err.message);
   return;
 }
 })
 
 app.post('/login-user', async(req, res) => {
-  const {email, password} = req.body.userDetails;
-  let sql = `SELECT * from users WHERE email=${email}`;
-  db.query(sql, async(err, result) => {
-    if(err) throw err;
+  try {
+
+    const {email, password} = req.body.userDetails;
+    let sql = `SELECT * from users WHERE email=?`;
+    db.query(sql,email, async(err, result) => {
+      if(err) throw err;
     if(result.length === 0) {
       res.send("Not Authenticated");
       return;
@@ -124,134 +161,169 @@ app.post('/login-user', async(req, res) => {
       if( await bcrypt.compare(password, userFound.password)) {
         const newCustomers = JSON.parse(userFound.customers);
         const user = {...userFound, token: generateToken(userFound.id), customers: newCustomers};
-            res.send(user)
+        res.send(user)
       } else {
         res.send("Not Authenticated");
       }
     }
   })
+} catch(err) {
+  res.send(err.message);
+  return;
+}
 })
 
 app.get('/get-user', async(req,res) => {
-  const token = req.headers.authorization;
-  const decoded = jwt.verify(token, process.env.JWT_SECRET);
-  const sql = `SELECT * from users WHERE id=?`;
-  db.query(sql, decoded.id, (err, result) => {
-    if(err) throw err;
-    const userFound=JSON.parse(JSON.stringify(result[0]));
-    const newCustomers = JSON.parse(userFound.customers);
-    const user = {...userFound, token: generateToken(userFound.id), customers: newCustomers};
-    res.send(user);
-  })
-})
+  try {
 
+    const token = req.headers.authorization;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const sql = `SELECT * from users WHERE id=?`;
+    db.query(sql, decoded.id, (err, result) => {
+      if(err) throw err;
+      const userFound=JSON.parse(JSON.stringify(result[0]));
+      const newCustomers = JSON.parse(userFound.customers);
+      const user = {...userFound, token: generateToken(userFound.id), customers: newCustomers};
+      res.send(user);
+    })
+  } catch (err) {
+    res.send(err.message);
+    return;
+  }
+  })
+  
 app.post('/forgot-password', async(req,res) => {
-  const {email} = req.body;
-  let sql = `SELECT * from users WHERE email=?`;
-  const string = genRand(12);
-  const hash = CryptoJS.SHA1(string);
-  const result = CryptoJS.enc.Hex.stringify(hash);
-  db.query(sql, email, async(err, result) => {
-    if(err) throw err;
-    if(result.length === 0) {
-      res.send("Email Not Found!");
-      return;
-    }
+  try {
+
+    const {email} = req.body;
+    let sql = `SELECT * from users WHERE email=?`;
+    const string = genRand(12);
+    const hash = CryptoJS.SHA1(string);
+    const result = CryptoJS.enc.Hex.stringify(hash);
+    db.query(sql, email, async(err, result) => {
+      if(err) throw err;
+      if(result.length === 0) {
+        res.send("Email Not Found!");
+        return;
+      }
+    })
+    var mailOptions = {
+      from: 'comltdhit@gmail.com',
+      to: email,
+      subject: 'Your New Password Is Here!',
+      text: result
+    };
+    
+    transporter.sendMail(mailOptions, function(error, info){
+      if (error) {
+        console.log(error);
+      } else {
+        console.log('Email sent: ' + info.response);
+        CheckPassword = result;
+        res.send(result)
+      }
+    });
+    
+  } catch (err) {
+    res.send(err.message);
+    return;
+  }
   })
-  var mailOptions = {
-    from: 'comltdhit@gmail.com',
-    to: email,
-    subject: 'Your New Password Is Here!',
-    text: result
-  };
+  
+  app.post('/change-password', async (req,res) => {
+    try {
+      const {email, password} = req.body;
+      const checkPassword = validator.isStrongPassword(password, config);
 
-  transporter.sendMail(mailOptions, function(error, info){
-    if (error) {
-      console.log(error);
-    } else {
-      console.log('Email sent: ' + info.response);
-      CheckPassword = result;
-      res.send(result)
-    }
-  });
+      if(!checkPassword) {
+        res.send("Password is not strong")
+      }
 
-})
+      if(checkIfContainsSync(password)) {
+        res.send("Password in dictionary");
+        return;
+      }
 
-app.post('/change-password', async (req,res) => {
-  const {email, password} = req.body;
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(password, salt);
-  db.query(`SELECT * from users WHERE email=?`, email, async (err, result) => {
-    if(err) throw err;
-    if(result.length === 0) {
-      res.send("Email is not registered")
-      return;
-    }
-  })
-  let sql = `UPDATE users SET password=? WHERE email=?`;
-  db.query(sql, [hashedPassword,email], async(err, result) => {
-    if(err) throw err;
-    if(result.affectedRows === 1) {
-      db.query(`SELECT * FROM users WHERE email=?`, email, (err, result) => {
+      let oldPasswords, salt;
+      db.query(`SELECT * from users WHERE email=?`, email, async (err, result) => {
         if(err) throw err;
-        if(result){
-          res.send(result[0])
-        }
+        if(result.length === 0) {
+          res.send("Email is not registered")
+          return;
+        } 
+        const resOldPasswords = JSON.parse(JSON.stringify(result[0].old_passwords));
+        salt = JSON.parse(JSON.stringify(result[0].salt));
+        const hashedPassword = await bcrypt.hash(password, salt);
+        oldPasswords = JSON.parse(resOldPasswords);
+        oldPasswords = oldPasswords.slice(-3);
+        const index = oldPasswords.findIndex((pass) => pass === hashedPassword);
+          if(index > -1) {
+            res.send("Password Already Used Before");
+            return;
+          } else {
+            oldPasswords = [...oldPasswords, hashedPassword];
+          }
+          let sql = `UPDATE users SET password=?, old_passwords=? WHERE email=?`;
+          db.query(sql, [hashedPassword,JSON.stringify(oldPasswords),email], async(err, result) => {
+            if(err) throw err;
+            if(result.affectedRows === 1) {
+              db.query(`SELECT * FROM users WHERE email=?`, email, (err, result) => {
+                if(err) throw err;
+                if(result){
+                  res.send(result[0])
+                }
+              })
+            }
+          })
       })
-    }
-  })
 
+    
+  } catch (err) {
+    res.send(err.message);
+    return;
+  }
 })
 
 app.post('/add-customer', async(req,res) => {
-  const {customerData, email} = req.body;
-  const customers = JSON.stringify(customerData);
-  let sql = `UPDATE users SET customers=? WHERE email=?`;
-  db.query(sql, [customers,email], async(err,result) =>{
-    if(err) throw err;
-    if(result) {
-      res.send(result);
-    }
+  try {
+
+    const {customerData, email} = req.body;
+    const customers = JSON.stringify(customerData);
+    let sql = `UPDATE users SET customers=? WHERE email=?`;
+    db.query(sql, [customers,email], async(err,result) =>{
+      if(err) throw err;
+      if(result) {
+        res.send(result);
+      }
+    })
+    
+  } catch (err) {
+    res.send(err.message);
+    return;
+  }
   })
-
-})
-
-https.createServer(options, app).listen(PORT, () => {
-  console.log(`Server listening on ${PORT}`);
-});
-
-
-// app.listen(PORT, () => {
+  
+  https.createServer(options, app).listen(PORT, () => {
+    console.log(`Server listening on ${PORT}`);
+  });
+  
+  
+  // app.listen(PORT, () => {
 //   console.log(`Server listening on ${PORT}`);
 // });
 
 const createTables = () => {
-  let sql = 'CREATE TABLE IF NOT EXISTS users (id INT(11) NOT NULL AUTO_INCREMENT, email VARCHAR(50), password TEXT, customers JSON, primary key(id))';
-  db.query(sql, (err, result) => {
-    if(err){
-      throw err;
-    }
-    console.log('Create users table success')
-  })
-}
+  try {
 
-
-const protect = async (req,res,next) => {
-  let token;
-  if(req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      try {
-          token = req.headers.authorization.split(' ')[1];
-          const decoded = jwt.verify(token, process.env.JWT_SECRET);
-          let sql = `SELECT * from users WHERE id=?`;
-          db.query(sql,decoded.id, (err, result) => {
-            if(err){
-              throw err;
-            }
-            req.user = result[0];
-            next();
-          })
-      } catch(err) {
-        console.log(err);
+    let sql = 'CREATE TABLE IF NOT EXISTS users (id INT(11) NOT NULL AUTO_INCREMENT, email VARCHAR(50), password TEXT, customers JSON, old_passwords JSON, salt TEXT, primary key(id))';
+    db.query(sql, (err, result) => {
+      if(err){
+        throw err;
       }
+      console.log('Create users table success')
+    })
+  } catch (err) {
+    res.send(err.message);
+    return;
   }
-} 
+}
