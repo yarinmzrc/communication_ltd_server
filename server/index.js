@@ -93,25 +93,7 @@ app.post('/create-user', async(req, res) => {
     const {email, password} = req.body.userDetails;
     const checkPassword = validator.isStrongPassword(password, config);
 
-    if(!validateEmail(email)) {
-      res.send("Not Authenticated");
-      return;
-    }
-
-    if(checkIfContainsSync(password)) {
-      res.send("Password in dictionary");
-      return;
-    }
-
-    if(!checkPassword) {
-      countNumOfPassword ++;
-      if(countNumOfPassword === config.passwordHistory) {
-        res.send("You Riched the top of the attempts");
-        return;
-      }
-      res.send("Password is Not Valid");
-      return;
-    };
+    
     let sql = `SELECT * from users WHERE email=?`;
     db.query(sql, email, async (err, result) => {
       if(err) {
@@ -120,6 +102,26 @@ app.post('/create-user', async(req, res) => {
       if(result.length) {
         res.send("user already registered")
     } else {
+      if(!validateEmail(email)) {
+        res.send("Not Authenticated");
+        return;
+      }
+  
+      if(checkIfContainsSync(password)) {
+        res.send("Password in dictionary");
+        return;
+      }
+  
+      if(!checkPassword) {
+        countNumOfPassword ++;
+        if(countNumOfPassword === config.passwordHistory) {
+          res.send("You Riched the top of the attempts");
+          return;
+        }
+        res.send("Password is Not Valid");
+        return;
+      };
+      
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
 
