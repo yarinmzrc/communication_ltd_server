@@ -113,26 +113,20 @@ app.post('/create-user', async(req, res) => {
       }
   
       if(!checkPassword) {
-        countNumOfPassword ++;
-        if(countNumOfPassword === config.passwordHistory) {
-          res.send("You Riched the top of the attempts");
-          return;
-        }
         res.send("Password is Not Valid");
         return;
       };
-      
+
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
 
       const arrayOfPasswords = [hashedPassword];
       
-      db.query(`INSERT INTO users(email,password,customers,old_passwords,salt) VALUES (?,?,?,?,?)`, [email, hashedPassword,"[]",JSON.stringify(arrayOfPasswords),salt], (err, result)=>{
+      db.query(`INSERT INTO users(email,password,customers,old_passwords,salt, is_blocked) VALUES (?,?,?,?,?,?)`, [email, hashedPassword,"[]",JSON.stringify(arrayOfPasswords),salt, false], (err, result)=>{
         if(err) throw err;
         db.query(`SELECT * FROM users WHERE email=?`, email, (err, result) => {
           if(err) throw err;
           if(result){
-            countNumOfPassword = 0;
             const user = {...result[0], token: generateToken(result[0].id)};
             res.send(user)
           }
@@ -147,24 +141,63 @@ app.post('/create-user', async(req, res) => {
 }
 })
 
+app.post('/block-user', async(req,res) => {
+  try {
+    const {email} = req.body.userDetails;
+    let sql = `UPDATE users SET is_blocked = TRUE WHERE email=?`;
+    db.query(sql, email, async (err, result) => {
+      if(err) throw err;
+      res.send("User Blocked")
+    })
+  } catch (err) {
+    res.send(err.message);
+  }
+})
+
+app.post('/free-user', async(req,res) => {
+  try {
+    const {email} = req.body.userDetails;
+    let sql = `UPDATE users SET is_blocked = FALSE WHERE email=?`;
+    db.query(sql, email, async (err, result) => {
+      if(err) throw err;
+      res.send("User Free")
+    })
+  } catch (err) {
+    res.send(err.message);
+  }
+})
+
 app.post('/login-user', async(req, res) => {
   try {
-
     const {email, password} = req.body.userDetails;
+    const checkPassword = validator.isStrongPassword(password, config);
     let sql = `SELECT * from users WHERE email=?`;
     db.query(sql,email, async(err, result) => {
       if(err) throw err;
-    if(result.length === 0) {
+      if(result.length === 0) {
       res.send("Not Authenticated");
       return;
     }
     if(result.length) {
       const userFound=JSON.parse(JSON.stringify(result[0]));
-      if( await bcrypt.compare(password, userFound.password)) {
+      if(!checkPassword) {
+        res.send("Password is Not Valid");
+        return;
+      };
+      if(userFound.is_blocked === 1) {
+        res.send("User Blocked");
+        return;
+      }else if( await bcrypt.compare(password, userFound.password)) {
         const newCustomers = JSON.parse(userFound.customers);
+        countNumOfPassword = 0;
         const user = {...userFound, token: generateToken(userFound.id), customers: newCustomers};
         res.send(user)
       } else {
+        countNumOfPassword ++;
+        if(countNumOfPassword === config.passwordHistory) {
+          res.send("You Reached the top of the attempts");
+          return;
+        }
         res.send("Not Authenticated");
       }
     }
@@ -257,7 +290,7 @@ app.post('/forgot-password', async(req,res) => {
         salt = JSON.parse(JSON.stringify(result[0].salt));
         const hashedPassword = await bcrypt.hash(password, salt);
         oldPasswords = JSON.parse(resOldPasswords);
-        oldPasswords = oldPasswords.slice(-3);
+        oldPasswords = oldPasswords.slice(-config.passwordHistory);
         const index = oldPasswords.findIndex((pass) => pass === hashedPassword);
           if(index > -1) {
             res.send("Password Already Used Before");
@@ -317,7 +350,7 @@ app.post('/add-customer', async(req,res) => {
 const createTables = () => {
   try {
 
-    let sql = 'CREATE TABLE IF NOT EXISTS users (id INT(11) NOT NULL AUTO_INCREMENT, email VARCHAR(50), password TEXT, customers JSON, old_passwords JSON, salt TEXT, primary key(id))';
+    let sql = 'CREATE TABLE IF NOT EXISTS users (id INT(11) NOT NULL AUTO_INCREMENT, email VARCHAR(50), password TEXT, customers JSON, old_passwords JSON, salt TEXT, is_blocked BOOLEAN, primary key(id))';
     db.query(sql, (err, result) => {
       if(err){
         throw err;
